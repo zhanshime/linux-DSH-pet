@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "dsh-pet 主窗口的默认能力",
+  "windows": ["pet", "selftest"],
+  "permissions": ["core:default"]
+}

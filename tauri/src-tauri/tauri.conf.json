@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "dsh-pet-desktop",
+  "version": "0.1.0",
+  "identifier": "com.pc2005.dshpet.desktop",
+  "build": {
+    "frontendDist": "../web"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb"
+    ],
+    "category": "Utility",
+    "shortDescription": "dsh-pet 桌面宠物（Tauri 外壳）",
+    "longDescription": "把 dsh-pet 的桌面渲染端装进 Tauri，无需 DSH / Electron 即可在 Fedora 桌面独立运行。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../assets/": "assets/"
+    }
+  }
+}

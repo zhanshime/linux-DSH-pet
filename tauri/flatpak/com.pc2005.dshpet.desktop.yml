@@ -1,0 +1,57 @@
+# dsh-pet 桌宠（Tauri 外壳）的 Flatpak 清单。
+#
+# 这里走"打包已构建的二进制"路线：Rust/Tauri 在宿主上编译，Flatpak 只负责运行时、
+# 素材和桌面集成。好处是构建快、不用在 sandbox 里拉几百 MB 的 rust SDK；
+# 想完全从源码构建见 README 里的说明。
+app-id: com.pc2005.dshpet.desktop
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: dsh-pet-desktop
+
+finish-args:
+  # 渲染：Wayland 原生；X11 只作兜底（程序内部仍优先 Wayland）
+  - --socket=wayland
+  # 纯 Wayland 实现：不需要 X11 读工作区了（可视区靠 DSH_PET_PANEL_INSET 配置）。
+  # 这里只留 fallback-x11，给“整台机器没有 Wayland”的会话兜底；Wayland 会话里它不生效。
+  - --socket=fallback-x11
+  - --share=ipc
+  # WebKitGTK 需要 GPU（软件合成会丢 alpha、出残影）
+  - --device=dri
+  # 渲染端素材/状态走本机 HTTP（127.0.0.1），没有网络权限时 loopback 起不来
+  - --share=network
+  # 读取用户自己的桌宠配置（~/.dsh/dsh-pet/main-config.jsonc，含位置/尺寸/动画池）
+  - --filesystem=~/.dsh:ro
+  # 素材目录：/app/bin 旁边没有，统一指到 share 下
+  - --env=DSH_PET_ASSETS=/app/share/dsh-pet/assets
+  # 顶栏占掉的高度（纯 Wayland 拿不到 strut）。默认即为 32，这里显式写出来方便查看；
+  # 顶栏自动隐藏时可覆盖：flatpak override --user --env=DSH_PET_PANEL_INSET=0 com.pc2005.dshpet.desktop
+  - --env=DSH_PET_PANEL_INSET=32
+  # WebKitGTK + NVIDIA + Wayland 的显式同步崩溃（WebKit #280210），程序里也会设，双保险
+  - --env=__NV_DISABLE_EXPLICIT_SYNC=1
+
+modules:
+  - name: dsh-pet-desktop
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 dsh-pet-desktop /app/bin/dsh-pet-desktop
+      - mkdir -p /app/share/dsh-pet/assets
+      - cp -a assets/. /app/share/dsh-pet/assets/
+      - install -Dm644 com.pc2005.dshpet.desktop.desktop
+        /app/share/applications/com.pc2005.dshpet.desktop.desktop
+      - install -Dm644 com.pc2005.dshpet.desktop.metainfo.xml
+        /app/share/metainfo/com.pc2005.dshpet.desktop.metainfo.xml
+      - install -Dm644 com.pc2005.dshpet.desktop.png
+        /app/share/icons/hicolor/256x256/apps/com.pc2005.dshpet.desktop.png
+    sources:
+      - type: file
+        path: ../src-tauri/target/release/dsh-pet-desktop
+      - type: dir
+        path: ../../assets
+        dest: assets
+      - type: file
+        path: com.pc2005.dshpet.desktop.desktop
+      - type: file
+        path: com.pc2005.dshpet.desktop.metainfo.xml
+      - type: file
+        path: com.pc2005.dshpet.desktop.png

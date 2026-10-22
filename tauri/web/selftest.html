@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>dsh-pet tauri selftest</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+      }
+      #c {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="320" height="180"></canvas>
+    <script src="./tauri-bridge.js"></script>
+    <script>
+      (function () {
+        var boot = window.__DSH_PET_BOOT__ || {};
+        var base = (boot.configUrl || '').replace(/\/dsh-pet-7340\/config$/, '');
+        var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+        function stage(name, extra) {
+          if (invoke) {
+            try {
+              invoke('pet_selftest_stage', { stage: String(name), extra: String(extra || '') });
+            } catch (e) {}
+          }
+        }
+        function finish(obj) {
+          if (invoke) {
+            try {
+              invoke('pet_selftest_result', { payload: obj });
+            } catch (e) {}
+          }
+          document.title = JSON.stringify(obj);
+        }
+        window.addEventListener('error', function (e) {
+          stage('js-error', (e.message || '') + ' @' + (e.filename || ''));
+        });
+
+        var probe = document.createElement('video');
+        var canPlay = {
+          webm: probe.canPlayType('video/webm'),
+          vp9: probe.canPlayType('video/webm; codecs="vp9"'),
+          vp9alpha: probe.canPlayType('video/webm; codecs="vp09.00.10.08"'),
+        };
+        stage('can-play', JSON.stringify(canPlay));
+
+        var cases = [
+          { name: 'plain (无 alpha)', url: base + '/dsh-pet-7340/thumb/main/plain-test.webm' },
+          {
+            name: 'alpha (待机呼吸休闲)',
+            url: base + '/dsh-pet-7340/thumb/main/' + encodeURIComponent('待机呼吸休闲') + '.webm',
+          },
+        ];
+        var results = [];
+
+        function runCase(i) {
+          if (i >= cases.length) {
+            stage('all-done');
+            finish({ ok: true, stage: 'done', canPlay: canPlay, results: results });
+            return;
+          }
+          var c = cases[i];
+          var v = document.createElement('video');
+          v.crossOrigin = 'anonymous';
+          v.muted = true;
+          v.playsInline = true;
+          v.preload = 'auto';
+          var settled = false;
+          function settle(res) {
+            if (settled) return;
+            settled = true;
+            results.push(Object.assign({ name: c.name, url: c.url }, res));
+            stage('case-done', c.name + ' ' + JSON.stringify(res));
+            runCase(i + 1);
+          }
+          v.addEventListener('loadedmetadata', function () {
+            stage('metadata', c.name + ' ' + v.videoWidth + 'x' + v.videoHeight);
+            try {
+              v.currentTime = 0.4;
+            } catch (e) {
+              stage('seek-throw', String(e));
+            }
+          });
+          v.addEventListener('seeked', function () {
+            var cv = document.getElementById('c');
+            var ctx = cv.getContext('2d');
+            ctx.fillStyle = '#ff00ff';
+            ctx.fillRect(0, 0, cv.width, cv.height);
+            var drew = true;
+            try {
+              ctx.drawImage(v, 0, 0, cv.width, cv.height);
+            } catch (e) {
+              drew = false;
+              stage('draw-throw', String(e));
+            }
+            var corner = null;
+            var center = null;
+            if (drew) {
+              try {
+                corner = Array.prototype.slice.call(ctx.getImageData(2, 2, 1, 1).data);
+                center = Array.prototype.slice.call(ctx.getImageData(cv.width >> 1, cv.height >> 1, 1, 1).data);
+              } catch (e) {
+                stage('getimagedata-throw', String(e));
+              }
+            }
+            settle({
+              ok: true,
+              videoSize: [v.videoWidth, v.videoHeight],
+              drew: drew,
+              corner: corner,
+              center: center,
+              cornerIsMagenta: !!(corner && corner[0] > 200 && corner[1] < 70 && corner[2] > 200),
+            });
+          });
+          v.addEventListener('error', function () {
+            settle({ ok: false, code: v.error && v.error.code, network: v.networkState });
+          });
+          v.src = c.url;
+          v.load();
+          setTimeout(function () {
+            settle({ ok: false, timeout: true });
+          }, 6000);
+        }
+        stage('script-start', 'base=' + base + ' probes=' + JSON.stringify(canPlay));
+        runCase(0);
+      })();
+    </script>
+  </body>
+</html>

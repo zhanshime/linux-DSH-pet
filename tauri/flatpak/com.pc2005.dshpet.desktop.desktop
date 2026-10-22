@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=dsh-pet
+Name[zh_CN]=dsh-pet 桌宠
+Comment=Desktop pet rendered by the dsh-pet web renderer
+Comment[zh_CN]=dsh-pet 渲染端驱动的桌面宠物
+Exec=dsh-pet-desktop
+Icon=com.pc2005.dshpet.desktop
+Terminal=false
+Categories=Utility;
+Keywords=pet;desktop;anime;桌宠;
+StartupNotify=false
+StartupWMClass=dsh-pet

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.pc2005.dshpet.desktop</id>
+  <name>dsh-pet</name>
+  <name xml:lang="zh_CN">dsh-pet 桌宠</name>
+  <summary>Desktop pet powered by the dsh-pet renderer</summary>
+  <summary xml:lang="zh_CN">由 dsh-pet 渲染端驱动的桌面宠物</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      A transparent, click-through desktop companion that reuses the dsh-pet web
+      renderer (sprite animations, right-click menu, chat bubble) inside a Tauri
+      shell. It runs natively on Wayland as a work-area-sized overlay: the window
+      never moves, the pet does, and everything outside the pet is passed through
+      to the desktop via wl_surface input regions.
+    </p>
+    <p xml:lang="zh_CN">
+      把 dsh-pet 的网页渲染端（精灵动画、右键菜单、对话气泡）装进 Tauri 外壳的透明桌宠。
+      在 Wayland 下以“工作区大小的透明覆盖层”运行：窗口不动、宠物在层内移动，
+      宠物以外的区域通过 wl_surface input region 穿透给桌面。
+    </p>
+  </description>
+  <launchable type="desktop-id">com.pc2005.dshpet.desktop.desktop</launchable>
+  <url type="homepage">https://github.com/PC2005-cloud</url>
+  <developer_name>PC2005</developer_name>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-22"/>
+  </releases>
+</component>
