@@ -1,7 +1,7 @@
 # dsh-pet 🐾
 
 ## linux下 faltpak版 桌面宠物，我在原作者基础上：采用tauri进行了构建，并生成了flatpak包，排除了xwayland依赖，纯wayland下运行
-注意，gnome下不能置顶，请安装https://extensions.gnome.org/extension/9024/deja-window/，手动设置将本软件置顶
+注意，gnome下不能置顶，请安装https://extensions.gnome.org/extension/9024/deja-window/ ，手动设置将本软件置顶
 ## 中文：
 
     把 dsh-pet 桌宠装进 Tauri：Fedora / GNOME Wayland 原生透明覆盖层，可点击穿透、可拖拽，支持 Flatpak。
