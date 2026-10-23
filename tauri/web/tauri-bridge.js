@@ -96,5 +96,27 @@
     },
   };
 
+  // 命中盒上报：输入区域默认是整个视频框（462×281），但人物实际只占中间一块。
+  // 用渲染端现成的 .pet-hit（HIT_BOX，约 173×223）当"可点区域"，透明边角就能穿透。
+  // 100ms 轮询 + 只在变化时发；拖拽/菜单期间主进程会改用整框，避免指针滑出区域。
+  (function reportHitRect() {
+    var last = null;
+    function tick() {
+      var el = document.querySelector('.pet-hit');
+      if (!el) return;
+      var r = el.getBoundingClientRect();
+      if (!(r.width >= 8 && r.height >= 8)) return;
+      var pad = 6; // 给指针留一点余量，避免边界抖动
+      var x = Math.round(r.left - pad);
+      var y = Math.round(r.top - pad);
+      var w = Math.round(r.width + pad * 2);
+      var h = Math.round(r.height + pad * 2);
+      if (last && last[0] === x && last[1] === y && last[2] === w && last[3] === h) return;
+      last = [x, y, w, h];
+      call('pet_set_hit_rect', { x: x, y: y, width: w, height: h });
+    }
+    setInterval(tick, 100);
+  })();
+
   call('pet_frontend_ready');
 })();
