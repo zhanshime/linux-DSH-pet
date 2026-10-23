@@ -32,6 +32,8 @@ pub struct InputState {
     pub wayland: AtomicBool,
     /// 覆盖层窗口尺寸（逻辑像素），busy 时整窗可点用
     pub win_size: Mutex<(f64, f64)>,
+    /// 当前可视区（= 窗口目标尺寸，工作区逻辑像素）；映射后放大到这里
+    pub view_size: Mutex<(f64, f64)>,
     /// 最近一次已应用的 input region（去重，避免逐帧发 Wayland 请求）
     pub last_region: Mutex<Vec<[f64; 4]>>,
     /// 最近一次收到 setBounds 的时间戳（毫秒，epoch）：重绘泵据此判断"宠物在移动"

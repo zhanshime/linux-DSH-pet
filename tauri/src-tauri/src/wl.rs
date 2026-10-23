@@ -8,7 +8,7 @@
 //! 所有坐标都是 surface 本地逻辑像素；本壳的窗口铺满工作区且位于工作区原点，
 //! 因此页面 CSS px 与屏幕坐标一一对应（scale=1 时），无需再换算。
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void, CString};
 
 use tauri::WebviewWindow;
 
@@ -75,6 +75,53 @@ pub fn set_input_region(window: &WebviewWindow, rects: &[[f64; 4]]) -> bool {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (window, rects);
+        false
+    }
+}
+
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn dsh_pet_set_toplevel_tag(
+        win: *mut c_void,
+        tag: *const c_char,
+        description: *const c_char,
+    ) -> i32;
+}
+
+/// 给窗口打上 `xdg_toplevel_tag_v1` 的 tag。
+///
+/// 协议本身不提供"置顶"等请求，它的作用是给窗口一个跨重启稳定的身份，
+/// 让合成器/窗口规则（位置、尺寸、always-on-top、用户规则）能认出同一个窗口。
+/// 返回 false：非 Wayland 后端、还没截到 xdg_toplevel、或合成器没实现该协议。
+pub fn set_toplevel_tag(window: &WebviewWindow, tag: &str, description: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::glib::translate::ToGlibPtr;
+        use gtk::prelude::*;
+
+        let Ok(win) = window.gtk_window() else {
+            return false;
+        };
+        if win.window().is_none() {
+            win.realize();
+        }
+        let Some(gdk_win) = win.window() else {
+            return false;
+        };
+        let raw: *mut gtk::gdk::ffi::GdkWindow = gdk_win.to_glib_none().0;
+        let Ok(tag_c) = CString::new(tag) else {
+            return false;
+        };
+        let Ok(desc_c) = CString::new(description) else {
+            return false;
+        };
+        unsafe {
+            dsh_pet_set_toplevel_tag(raw as *mut c_void, tag_c.as_ptr(), desc_c.as_ptr()) != 0
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (window, tag, description);
         false
     }
 }

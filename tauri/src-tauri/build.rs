@@ -36,4 +36,8 @@ fn build_wayland_shim() {
     // gdk_wayland_* 在 libgdk-3；wl_surface/wl_region 在 libwayland-client
     println!("cargo:rustc-link-lib=gdk-3");
     println!("cargo:rustc-link-lib=wayland-client");
+    // xdg_toplevel_tag_v1 需要截获 GTK 创建的 xdg_toplevel：把 shim 里的
+    // wl_proxy_marshal_array_flags 导出到动态符号表，才能对 libwayland 的调用插桩。
+    println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
+    println!("cargo:rustc-link-lib=dl");
 }

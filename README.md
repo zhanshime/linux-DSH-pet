@@ -34,10 +34,11 @@
 - **点击穿透**：宠物以外全部透传（`wl_surface.set_input_region`，C shim 直连 Wayland；GTK3 没实现这个 API）。可点区域取渲染端的 `.pet-hit` 命中盒（约视频框的 30%），透明边角也能穿透。
 - **自动漫游**：待机动画结束掷骰决定「走一段 / 转身 / 小动作」，权重可调；`fixedEnabled: true` 可让它老实待在角落。
 - **完整交互**：拖拽、右键菜单、对话气泡、余额/工作状态联动、碎碎念 + 表情包配图。
-- **分辨率/缩放自适应**：改分辨率、换缩放、插拔屏后自动重排（窗口跟随整屏、渲染端热更新几何）。
+- **分辨率/缩放自适应**：改分辨率、换缩放、插拔屏后自动重排（窗口跟随工作区、渲染端热更新几何）。
 - **Flatpak**：`org.gnome.Platform//50` 运行时，无 X11 权限；构建脚本一键打包并把 `.flatpak` 放到桌面。
 - **零模型依赖的碎碎念**：内置 12 句本地文案 + 27 张表情包随机配图，周期可配；右键菜单可手动触发。
 - **自检**：`--selftest` 用 canvas 采样验证 VP9 alpha 解码/合成，排查黑底/透明问题。
+- **xdg_toplevel_tag_v1**：给窗口打 `dsh-pet` 这个稳定 tag（+ 中文描述），供合成器/窗口规则在应用重启后识别同一个窗口（GNOME 51 / Mutter 51 支持）。协议本身不提供置顶请求。
 
 ## 截图
 
@@ -59,8 +60,6 @@ cd tauri/src-tauri && cargo build --release && cd ../..
 
 # 打包 + 安装 + 导出到桌面（检测到旧版会询问是否先卸载；--uninstall 强制、--no-uninstall 跳过）
 bash ./dsh-pet构建.sh
-
-flatpak run com.pc2005.dshpet.desktop
 ```
 
 桌面上会生成 `dsh-pet.flatpak`，可直接双击安装。卸载：
@@ -91,7 +90,7 @@ bash tauri/run.sh
 
 ```
 ┌──────────────────────────── Tauri (GTK3 + WebKitGTK) ────────────────────────────┐
-│  覆盖层窗口 = 整块显示器（透明、无边框、跳过任务栏）                              │
+│  覆盖层窗口 = 工作区（透明、无边框、跳过任务栏）                                  │
 │                                                                                  │
 │  web/  渲染端（复用 dsh-pet runtime/electron-helper）                            │
 │    ├─ sprite.js / events.js / renderer.js   → 动画、菜单、气泡、拖拽             │
@@ -100,20 +99,21 @@ bash tauri/run.sh
 │  Rust 主进程                                                                     │
 │    ├─ http.rs       127.0.0.1 极简宿主：/config /state /thumb /pic /font /whisper│
 │    ├─ config.rs     JSONC 合并（内置默认 + ~/.dsh/dsh-pet/main-config.jsonc）    │
-│    ├─ wl.rs + wayland_shim.c   wl_surface.set_input_region（点击穿透）           │
+│    ├─ wl.rs + wayland_shim.c   input region、xdg_toplevel_tag_v1                │
 │    └─ 几何监视（GDK 每秒比对，分辨率/缩放变化 → 推 pet_displays + 改窗口尺寸）   │
 └──────────────────────────────────────────────────────────────────────────────────┘
                                    │
-                    页面坐标 == 工作区坐标（窗口铺满整屏，
-                    Mutter 把它夹到工作区原点，面板那一条边用 panelInset 扣掉）
+                    页面坐标 == 工作区坐标（窗口铺满工作区，Mutter 把它夹到工作区原点；
+                    面板那一条边用 panelInset 扣掉，页面 y=0 即工作区顶边）
 ```
 
 几个关键决定（都是踩坑后的结论）：
 
-1. **窗口不移动，宠物在层内移动**。Wayland 的 `xdg-shell` 不允许客户端定位窗口，GNOME 还会把放不下的窗口夹到工作区原点；所以窗口固定铺满整屏，靠 `tauri-bridge.js` 改 `.pet-sprite` 的 `left/top`，再把“窗口本该在的位置”从输入区域里扣回来。
+1. **窗口不移动，宠物在层内移动**。Wayland 的 `xdg-shell` 不允许客户端定位窗口，GNOME 还会把放不下的窗口夹到工作区原点；所以窗口固定铺满工作区，靠 `tauri-bridge.js` 改 `.pet-sprite` 的 `left/top`，再把“窗口本该在的位置”从输入区域里扣回来。
 2. **点击穿透走 raw `wl_surface`**。GTK3 的 Wayland 后端没有实现 `gdk_window_input_shape_combine_region`；而且 GTK 会在 commit 时用默认整窗 shape 覆盖，所以 shim 下发后还要每 400ms 重发一次。
 3. **不读 X11 工作区**。`_NET_WORKAREA` 只有 XWayland 侧有，纯 Wayland 拿不到 strut；改成 `DSH_PET_PANEL_INSET` 配置（默认 32px 顶栏）。
-4. **NVIDIA 显式同步**：WebKitGTK + Wayland + NVIDIA 会直接断连（[WebKit #280210](https://bugs.webkit.org/show_bug.cgi?id=280210)），启动时自动设 `__NV_DISABLE_EXPLICIT_SYNC=1`，保留 DMABUF/GPU 合成。
+4. **窗口先小后大**：先以 1200×700 映射，再放大到工作区。Mutter 会把“创建即填满工作区”的窗口自动标记为最大化，而 GNOME 的窗口菜单对最大化窗口禁用「置顶 / 改变大小」；放大后窗口仍落在工作区原点（用调试角标实测对齐）。
+5. **NVIDIA 显式同步**：WebKitGTK + Wayland + NVIDIA 会直接断连（[WebKit #280210](https://bugs.webkit.org/show_bug.cgi?id=280210)），启动时自动设 `__NV_DISABLE_EXPLICIT_SYNC=1`，保留 DMABUF/GPU 合成。
 
 ## 配置
 
@@ -142,7 +142,7 @@ bash tauri/run.sh
 
 ## 已知限制
 
-- **没有置顶**。GNOME 不实现 `wlr-layer-shell`，也没有客户端可用的 keep-above 请求；`xdg_toplevel_tag_manager_v1` 只能给窗口打 tag（供合成器/扩展做规则匹配），**不能自己置顶**。要真置顶需要 GNOME Shell 扩展（`Meta.Window.make_above()`）。
+- **没有置顶**。GNOME 不实现 `wlr-layer-shell`，也没有客户端可用的 keep-above 请求；本项目已适配 `xdg_toplevel_tag_manager_v1`，但 tag 只是窗口身份标识（给规则/扩展匹配用），**不能自己置顶**。要真置顶需要 GNOME Shell 扩展（`Meta.Window.get_tag()` 匹配后 `make_above()`）。
 - **只覆盖主屏**：多屏时宠物限制在主屏。
 - **顶栏高度靠配置**：纯 Wayland 拿不到 strut，`DSH_PET_PANEL_INSET` 默认 32（GNOME 顶栏），换主题/移动面板时需要改。
 - **分数缩放未验证**：1x / 2x 实测正常，1.25/1.5 需要再验。
@@ -154,7 +154,7 @@ bash tauri/run.sh
 .
 ├── tauri/                     Tauri 外壳
 │   ├── web/                   渲染端（复用 dsh-pet，含 tauri-bridge.js）
-│   ├── src-tauri/             Rust：窗口/几何/HTTP/config/穿透
+│   ├── src-tauri/             Rust：窗口/几何/HTTP/config/穿透/tag
 │   ├── flatpak/               Flatpak manifest + 元数据 + 图标
 │   ├── tools/                 调试小工具（X11 探针、GDK monitor 探针）
 │   ├── run.sh                 源码运行
@@ -173,7 +173,7 @@ bash tauri/run.sh --selftest
 # 模拟一次分辨率变化（不动系统设置）
 DSH_PET_VERBOSE=1 DSH_PET_TEST_GEOM=1280x720 bash tauri/run.sh
 
-# 看 Wayland 协议层（穿透/窗口形状）
+# 看 Wayland 协议层（穿透/窗口形状/tag）
 WAYLAND_DEBUG=1 bash tauri/run.sh 2>&1 | grep -E "set_input_region|xdg_toplevel"
 
 # 看本机宿主返回的配置/状态

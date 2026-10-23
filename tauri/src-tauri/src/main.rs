@@ -234,29 +234,61 @@ fn spawn_monitor_watch(window: tauri::WebviewWindow, state: Arc<pointer::InputSt
                 }
                 return;
             };
+            let (vw, vh) = view_size(nw, nh);
             let (cw, ch) = st.win_size.lock().map(|g| *g).unwrap_or((0.0, 0.0));
             if verbose() {
-                eprintln!("[dsh-pet] 几何检查: 工作区 {nw:.0}×{nh:.0}，记录 {cw:.0}×{ch:.0}");
+                eprintln!(
+                    "[dsh-pet] 几何检查: 屏幕 {nw:.0}×{nh:.0}，可视区 {vw:.0}×{vh:.0}，记录 {cw:.0}×{ch:.0}"
+                );
             }
-            if (nw - cw).abs() < 1.0 && (nh - ch).abs() < 1.0 {
+            if (vw - cw).abs() < 1.0 && (vh - ch).abs() < 1.0 {
                 return;
             }
-            let (vw, vh) = view_size(nw, nh);
             eprintln!(
-                "[dsh-pet] 桌面几何变化: {cw:.0}×{ch:.0} -> {nw:.0}×{nh:.0}\u{ff08}可视区 {vw:.0}×{vh:.0}，scale {scale}\u{ff09}"
+                "[dsh-pet] 桌面几何变化: 屏幕 {nw:.0}×{nh:.0}，可视区 {vw:.0}×{vh:.0}（原 {cw:.0}×{ch:.0}，scale {scale}）"
             );
             if let Ok(mut g) = st.win_size.lock() {
-                *g = (nw, nh);
+                *g = (vw, vh);
+            }
+            if let Ok(mut g) = st.view_size.lock() {
+                *g = (vw, vh);
             }
             // 先推几何，再改窗口：渲染端先更新边界，随后窗口 resize 触发的 position() 用新 VIEW
             let _ = w2.emit("pet_displays", displays_payload(vw, vh));
-            if let Err(e) = w2.set_size(tauri::LogicalSize::new(nw, nh)) {
+            if let Err(e) = w2.set_size(tauri::LogicalSize::new(vw, vh)) {
                 eprintln!("[dsh-pet] 桌面几何变化后 set_size 失败: {e}");
             }
         });
         if sent.is_err() {
             break;
         }
+    });
+}
+
+/// 等窗口真正 map 之后给 xdg_toplevel 打 tag（GTK 是懒创建 toplevel 的，所以要重试）。
+fn spawn_toplevel_tag(window: tauri::WebviewWindow) {
+    std::thread::spawn(move || {
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let w = window.clone();
+            let w2 = w.clone();
+            let hit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let hit2 = hit.clone();
+            let sent = w.run_on_main_thread(move || {
+                if wl::set_toplevel_tag(&w2, "dsh-pet", "dsh-pet 桌宠") {
+                    hit2.store(true, Ordering::SeqCst);
+                }
+            });
+            if sent.is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            if hit.load(Ordering::SeqCst) {
+                eprintln!("[dsh-pet] 已设置 xdg_toplevel_tag = dsh-pet");
+                return;
+            }
+        }
+        eprintln!("[dsh-pet] 未设置 xdg_toplevel_tag（合成器不支持，或未截到 xdg_toplevel）");
     });
 }
 
@@ -364,6 +396,33 @@ fn pet_set_bounds(
             // 先整窗穿透，50ms 内指针轮询会按光标位置纠正。
             let _ = window.set_ignore_cursor_events(true);
         }
+        // 先小后大：窗口以小尺寸映射，避开 Mutter “创建即填满工作区 → 自动最大化”，
+        // 映射完成后再放大到工作区。最大化状态下 GNOME 会把窗口菜单的「置顶」置灰。
+        let w = window.clone();
+        let st = (*state).clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            let w2 = w.clone();
+            let st2 = st.clone();
+            let _ = w.run_on_main_thread(move || {
+                let (vw, vh) = st2.view_size.lock().map(|g| *g).unwrap_or((0.0, 0.0));
+                if vw > 1.0 && vh > 1.0 {
+                    if let Err(e) = w2.set_size(tauri::LogicalSize::new(vw, vh)) {
+                        eprintln!("[dsh-pet] 放大到可视区失败: {e}");
+                    }
+                }
+                apply_input_region(&w2, &st2, true);
+                if verbose() {
+                    if let Ok(g) = w2.gtk_window() {
+                        use gtk::prelude::*;
+                        eprintln!(
+                            "[dsh-pet] 已放大到 {vw:.0}×{vh:.0}，maximized={}",
+                            g.is_maximized()
+                        );
+                    }
+                }
+            });
+        });
     }
     apply_input_region(&window, &state, false);
     Ok(())
@@ -688,7 +747,7 @@ window.addEventListener('resize', dshMark);
 
             let win = WebviewWindowBuilder::new(app, "pet", WebviewUrl::App("index.html".into()))
                 .title("dsh-pet")
-                .inner_size(mon_w, mon_h)
+                .inner_size(1200.0, 700.0)
                 .position(0.0, 0.0)
                 .transparent(true)
                 .decorations(false)
@@ -707,7 +766,10 @@ window.addEventListener('resize', dshMark);
             let wayland = wl::display_is_wayland();
             state.wayland.store(wayland, Ordering::SeqCst);
             if let Ok(mut g) = state.win_size.lock() {
-                *g = (mon_w, mon_h);
+                *g = (mw, mh);
+            }
+            if let Ok(mut g) = state.view_size.lock() {
+                *g = (mw, mh);
             }
             eprintln!(
                 "[dsh-pet] 显示后端: {}（穿透方式: {}）",
@@ -720,6 +782,7 @@ window.addEventListener('resize', dshMark);
             if wayland {
                 let st = app.state::<Arc<pointer::InputState>>().inner().clone();
                 spawn_region_refresh(win.clone(), st);
+                spawn_toplevel_tag(win.clone());
             }
             {
                 let st = app.state::<Arc<pointer::InputState>>().inner().clone();
@@ -740,12 +803,15 @@ window.addEventListener('resize', dshMark);
                             let st3 = st2.clone();
                             let _ = w3.run_on_main_thread(move || {
                                 eprintln!("[dsh-pet] 测试：模拟工作区变化 -> {fw:.0}×{fh:.0}");
-                                if let Ok(mut g) = st3.win_size.lock() {
-                                    *g = (fw, fh);
-                                }
                                 let (tvw, tvh) = view_size(fw, fh);
+                                if let Ok(mut g) = st3.win_size.lock() {
+                                    *g = (tvw, tvh);
+                                }
+                                if let Ok(mut g) = st3.view_size.lock() {
+                                    *g = (tvw, tvh);
+                                }
                                 let _ = w4.emit("pet_displays", displays_payload(tvw, tvh));
-                                let _ = w4.set_size(tauri::LogicalSize::new(fw, fh));
+                                let _ = w4.set_size(tauri::LogicalSize::new(tvw, tvh));
                             });
                         });
                     }
