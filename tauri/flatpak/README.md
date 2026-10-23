@@ -10,7 +10,11 @@ cd dsh-pet
 ./dsh-pet构建.sh               # 打包 + --user 安装 + 导出 bundle 并复制到桌面（~/桌面/dsh-pet.flatpak）
 ./dsh-pet构建.sh --rebuild     # 先 cargo build --release 再打包
 ./dsh-pet构建.sh --no-desktop  # 只构建，不往桌面复制
+./dsh-pet构建.sh --uninstall   # 构建前先卸载旧版本（不询问）
+./dsh-pet构建.sh --no-uninstall# 保留旧版本、不询问
 ```
+
+检测到已安装时，脚本会先问「是否先卸载旧版本？[y/N]」；非交互环境默认保留。卸载时会先结束运行中的实例。
 
 脚本在 `dsh-pet/` 根目录，内部会自动切到 `tauri/flatpak/` 用 manifest 构建。
 
@@ -61,6 +65,17 @@ flatpak uninstall com.pc2005.dshpet.desktop
 ```
 
 > 注意：同一个桌宠同时只能有一个实例的覆盖层在屏上。调试前先 `pkill -x dsh-pet-desktop`。
+
+## 启动失败：`bwrap: Can't find source path /run/user/1000/doc/by-app/...`
+
+这是**系统**的 xdg-document-portal FUSE 挂载失效（挂起/休眠后常见），不是应用问题：
+
+```bash
+ls /run/user/1000/doc      # 若报 “传输端点尚未连接” 即命中
+flatpak run --no-documents-portal com.pc2005.dshpet.desktop   # 临时绕过
+```
+
+彻底恢复：注销重新登录或重启（会重建该挂载），之后从应用菜单启动即可。`fusermount3 -u` 对失效挂载通常无效。
 
 ## 想完全从源码构建？
 
