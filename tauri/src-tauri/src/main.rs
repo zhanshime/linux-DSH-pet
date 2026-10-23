@@ -262,11 +262,21 @@ fn spawn_monitor_watch(window: tauri::WebviewWindow, state: Arc<pointer::InputSt
 
 /// 按当前宠物包围盒 / 输入忙状态刷新"可点区域"
 fn current_region_rects(state: &pointer::InputState) -> Vec<[f64; 4]> {
+    let busy = state.busy.load(Ordering::Relaxed);
+    let box_rect = state.box_rect.lock().ok().and_then(|g| *g);
+    let hit_rect = state.hit_rect.lock().ok().and_then(|g| *g);
     let mut rects: Vec<[f64; 4]> = Vec::new();
-    if let Some(b) = state.box_rect.lock().ok().and_then(|g| *g) {
-        rects.push(b);
+    // 空闲：优先用命中盒（.pet-hit，比视频框小 ~70%）；拖拽/菜单期间退回整框，
+    // 避免指针滑出命中盒导致拖拽断掉。
+    let pet = if busy {
+        box_rect.or(hit_rect)
+    } else {
+        hit_rect.or(box_rect)
+    };
+    if let Some(r) = pet {
+        rects.push(r);
     }
-    if state.busy.load(Ordering::Relaxed) {
+    if busy {
         // 菜单/对话弹窗：把渲染端上报的控件矩形也并进来（sprite 已把它们换算成页面坐标），
         // 这样弹窗可点、其余区域仍然穿透。
         if let Ok(extra) = state.rects.lock() {
@@ -339,6 +349,12 @@ fn pet_set_bounds(
             *guard = Some([bx, by, s, s * 9.0 / 16.0 + bp]);
         }
         state.last_bounds_ms.store(now_ms(), Ordering::Relaxed);
+        if verbose() {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, Ordering::Relaxed) % 40 == 0 {
+                eprintln!("[dsh-pet] bounds box=({bx:.0},{by:.0}) size={s:.0}");
+            }
+        }
     }
 
     if !state.shown.swap(true, Ordering::SeqCst) {
@@ -385,6 +401,43 @@ fn pet_set_input_busy(
         }
         apply_input_region(&window, &state, false);
     }
+}
+
+/// 渲染端上报命中盒（`.pet-hit` 的屏幕坐标），空闲时据此收窄可点区域。
+#[tauri::command]
+fn pet_set_hit_rect(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<pointer::InputState>>,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) {
+    if !(x.is_finite() && y.is_finite() && width.is_finite() && height.is_finite()) {
+        return;
+    }
+    if width < 8.0 || height < 8.0 {
+        return;
+    }
+    let rect = [x, y, width, height];
+    let changed = state
+        .hit_rect
+        .lock()
+        .map(|g| *g != Some(rect))
+        .unwrap_or(false);
+    if !changed {
+        return;
+    }
+    if let Ok(mut g) = state.hit_rect.lock() {
+        *g = Some(rect);
+    }
+    if verbose() {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if N.fetch_add(1, Ordering::Relaxed) < 5 {
+            eprintln!("[dsh-pet] hit rect -> {rect:?}");
+        }
+    }
+    apply_input_region(&window, &state, false);
 }
 
 #[tauri::command]
@@ -509,6 +562,7 @@ fn main() {
             pet_set_bounds,
             pet_set_interactive,
             pet_set_input_busy,
+            pet_set_hit_rect,
             pet_set_input_regions,
             pet_open_url,
             pet_frontend_ready,
