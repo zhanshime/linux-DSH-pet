@@ -17,6 +17,9 @@ use std::sync::{Arc, Mutex};
 pub struct InputState {
     /// 宠物包围盒（屏幕坐标，逻辑像素）：[x, y, w, h]，由 setBounds 的 boxX/boxY/size/bottomPad 推算
     pub box_rect: Mutex<Option<[f64; 4]>>,
+    /// 渲染端上报的命中盒（.pet-hit 的 getBoundingClientRect，含 6px 余量）：
+    /// 空闲时用它当可点区域（比整个视频框小得多），拖拽/菜单期间仍用 box_rect 兜底。
+    pub hit_rect: Mutex<Option<[f64; 4]>>,
     /// 正在使用窗口输入：拖拽中 / 菜单开着 / 对话弹窗开着
     pub busy: AtomicBool,
     /// 当前窗口是否可交互（仅 X11 轮询模式使用）
