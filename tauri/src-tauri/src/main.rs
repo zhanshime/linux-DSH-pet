@@ -25,10 +25,11 @@
 mod config;
 mod http;
 mod pointer;
+mod tray;
 mod wl;
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -297,25 +298,34 @@ fn current_region_rects(state: &pointer::InputState) -> Vec<[f64; 4]> {
     let busy = state.busy.load(Ordering::Relaxed);
     let box_rect = state.box_rect.lock().ok().and_then(|g| *g);
     let hit_rect = state.hit_rect.lock().ok().and_then(|g| *g);
-    let mut rects: Vec<[f64; 4]> = Vec::new();
-    // 空闲：优先用命中盒（.pet-hit，比视频框小 ~70%）；拖拽/菜单期间退回整框，
-    // 避免指针滑出命中盒导致拖拽断掉。
-    let pet = if busy {
-        box_rect.or(hit_rect)
-    } else {
-        hit_rect.or(box_rect)
-    };
-    if let Some(r) = pet {
-        rects.push(r);
-    }
     if busy {
-        // 菜单/对话弹窗：把渲染端上报的控件矩形也并进来（sprite 已把它们换算成页面坐标），
+        // 拖拽/菜单/对话：整框兜底 + 渲染端上报的控件矩形（sprite 已换算成页面坐标），
         // 这样弹窗可点、其余区域仍然穿透。
+        let mut rects: Vec<[f64; 4]> = Vec::new();
+        if let Some(r) = box_rect.or(hit_rect) {
+            rects.push(r);
+        }
         if let Ok(extra) = state.rects.lock() {
             rects.extend(extra.iter().copied());
         }
+        return rects;
     }
-    rects
+    // 空闲：优先用视频帧 alpha 轮廓（头发/道具/裙摆都能按下去拖）。
+    let sil = state
+        .silhouette
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    if !sil.is_empty() {
+        return sil;
+    }
+    // 轮廓暂时为空（视频换帧/首帧透明）：先退回命中盒；若超过 1.5s 仍为空，
+    // 退回整框兜底，宁可多挡一点也不能让整只宠物变成全穿透。
+    let stale = now_ms().saturating_sub(state.last_silhouette_ms.load(Ordering::Relaxed));
+    if stale > 1500 {
+        return box_rect.or(hit_rect).into_iter().collect();
+    }
+    hit_rect.or(box_rect).into_iter().collect()
 }
 
 fn apply_input_region(window: &tauri::WebviewWindow, state: &pointer::InputState, force: bool) {
@@ -333,7 +343,14 @@ fn apply_input_region(window: &tauri::WebviewWindow, state: &pointer::InputState
             return;
         }
     }
-    if wl::set_input_region(window, &rects) {
+    let ok = wl::set_input_region(window, &rects);
+    if verbose() {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if N.fetch_add(1, Ordering::Relaxed) < 8 {
+            eprintln!("[dsh-pet] apply region n={} ok={ok} rects={:?}", rects.len(), &rects[..rects.len().min(3)]);
+        }
+    }
+    if ok {
         if let Ok(mut g) = state.last_region.lock() {
             *g = rects;
         }
@@ -355,6 +372,41 @@ fn spawn_region_refresh(window: tauri::WebviewWindow, state: Arc<pointer::InputS
             break;
         }
     });
+}
+
+
+/// 去掉 GTK/tao 在 Wayland 下为禁用 SSD 而塞的空 CSD 标题栏。
+/// tao 在 `decorations=false` 时会 `gtk_window_set_titlebar(Some(EventBox))` 强制 CSD；
+/// 窗口**最大化时 GTK 会隐藏标题栏**，一旦窗口不再最大化（我们现在用小窗起步再放大），
+/// 这条空标题栏就会按主题画出一条可见的横条。这里换成 0 高、全透明的自定义 titlebar，
+/// 并把 CSD `decoration` 的背景/阴影清掉。
+#[cfg(target_os = "linux")]
+fn strip_csd_titlebar(window: &tauri::WebviewWindow) {
+    use gtk::prelude::*;
+    let Ok(g) = window.gtk_window() else {
+        return;
+    };
+    let tb = gtk::EventBox::new();
+    tb.set_size_request(-1, 0);
+    tb.set_app_paintable(true);
+    tb.connect_draw(|_, cr| {
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+        let _ = cr.paint();
+        gtk::glib::Propagation::Stop
+    });
+    g.set_titlebar(Some(&tb));
+    if let Some(screen) = gtk::gdk::Screen::default() {
+        let provider = gtk::CssProvider::new();
+        let _ = provider.load_from_data(
+            b"decoration { background-color: transparent; box-shadow: none; border-radius: 0; }\
+              decoration > * { background-color: transparent; }",
+        );
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
 
 #[tauri::command]
@@ -416,8 +468,10 @@ fn pet_set_bounds(
                     if let Ok(g) = w2.gtk_window() {
                         use gtk::prelude::*;
                         eprintln!(
-                            "[dsh-pet] 已放大到 {vw:.0}×{vh:.0}，maximized={}",
-                            g.is_maximized()
+                            "[dsh-pet] 已放大到 {vw:.0}×{vh:.0}，maximized={} decorated={} titlebar={}",
+                            g.is_maximized(),
+                            g.is_decorated(),
+                            g.titlebar().is_some()
                         );
                     }
                 }
@@ -494,6 +548,56 @@ fn pet_set_hit_rect(
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         if N.fetch_add(1, Ordering::Relaxed) < 5 {
             eprintln!("[dsh-pet] hit rect -> {rect:?}");
+        }
+    }
+    apply_input_region(&window, &state, false);
+}
+
+/// 渲染端从视频帧 alpha 采样出的宠物轮廓（页面坐标），空闲时作为精确可点区域。
+#[tauri::command]
+fn pet_set_silhouette(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, Arc<pointer::InputState>>,
+    rects: Vec<[f64; 4]>,
+) {
+    let mut clean: Vec<[f64; 4]> = rects
+        .into_iter()
+        .filter(|r| {
+            r.iter().all(|v| v.is_finite()) && r[2] >= 1.0 && r[3] >= 1.0
+        })
+        .take(64)
+        .collect();
+    clean.sort_by(|a, b| {
+        (a[1], a[0])
+            .partial_cmp(&(b[1], b[0]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let changed = state
+        .silhouette
+        .lock()
+        .map(|g| *g != clean)
+        .unwrap_or(false);
+    if !changed {
+        return;
+    }
+    if !clean.is_empty() {
+        state
+            .last_silhouette_ms
+            .store(now_ms(), Ordering::Relaxed);
+    }
+    if let Ok(mut g) = state.silhouette.lock() {
+        *g = clean;
+    }
+    if verbose() {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if N.fetch_add(1, Ordering::Relaxed) < 6 {
+            let n = state.silhouette.lock().map(|g| g.len()).unwrap_or(0);
+            let first: Vec<[f64; 4]> = state
+                .silhouette
+                .lock()
+                .map(|g| g.iter().copied().take(3).collect())
+                .unwrap_or_default();
+            eprintln!("[dsh-pet] silhouette -> {n} rects, first={first:?}");
         }
     }
     apply_input_region(&window, &state, false);
@@ -594,7 +698,35 @@ fn resolve_assets(app: &tauri::App) -> PathBuf {
     PathBuf::from("assets")
 }
 
+/// 单实例：再启动一个会得到两只宠物 + 两个托盘图标。用 XDG_RUNTIME_DIR 里的
+/// unix socket 当锁（不引入新依赖）；socket 文件残留时说明上次异常退出，直接重绑。
+fn acquire_single_instance() -> bool {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+    let path = std::path::Path::new(&dir).join("dsh-pet-desktop.sock");
+    if UnixStream::connect(&path).is_ok() {
+        return false;
+    }
+    let _ = std::fs::remove_file(&path);
+    match UnixListener::bind(&path) {
+        Ok(listener) => {
+            std::thread::spawn(move || loop {
+                let _ = listener.accept();
+            });
+            true
+        }
+        Err(e) => {
+            eprintln!("[dsh-pet] 单实例锁创建失败（忽略）：{e}");
+            true
+        }
+    }
+}
+
 fn main() {
+    if !acquire_single_instance() {
+        eprintln!("[dsh-pet] 已有实例在运行，退出");
+        return;
+    }
     let want_wayland = use_wayland_session();
     if std::env::var("GDK_BACKEND").is_err() {
         std::env::set_var("GDK_BACKEND", if want_wayland { "wayland" } else { "x11" });
@@ -623,6 +755,7 @@ fn main() {
             pet_set_input_busy,
             pet_set_hit_rect,
             pet_set_input_regions,
+            pet_set_silhouette,
             pet_open_url,
             pet_frontend_ready,
             pet_console,
@@ -631,8 +764,9 @@ fn main() {
         ])
         .setup(move |app| {
             let assets = resolve_assets(app);
-            let port = http::spawn(http::Host::new(assets.clone()))
-            .map_err(|e| format!("启动本机素材服务失败: {e}"))?;
+            let host = http::Host::new(assets.clone());
+            let whisper = host.whisper_handle();
+            let port = http::spawn(host).map_err(|e| format!("启动本机素材服务失败: {e}"))?;
             eprintln!("[dsh-pet] 素材目录: {}", assets.display());
             eprintln!("[dsh-pet] 本机宿主: http://127.0.0.1:{port}/dsh-pet-7340/");
 
@@ -762,8 +896,11 @@ window.addEventListener('resize', dshMark);
                 .build()
                 .map_err(|e| format!("创建桌宠窗口失败: {e}"))?;
 
-            let state = app.state::<Arc<pointer::InputState>>().inner().clone();
             let wayland = wl::display_is_wayland();
+            if wayland {
+                strip_csd_titlebar(&win);
+            }
+            let state = app.state::<Arc<pointer::InputState>>().inner().clone();
             state.wayland.store(wayland, Ordering::SeqCst);
             if let Ok(mut g) = state.win_size.lock() {
                 *g = (mw, mh);
@@ -817,6 +954,9 @@ window.addEventListener('resize', dshMark);
                     }
                 }
             }
+            // 系统托盘（StatusNotifierItem）。无宿主时只打日志。
+            let pet_visible = Arc::new(AtomicBool::new(true));
+            tray::spawn(app.handle().clone(), pet_visible, whisper.clone());
             if !wayland {
                 pointer::spawn(win.clone(), state);
             } else if std::env::var("DSH_PET_REPAINT_PUMP").map(|v| v == "1").unwrap_or(false) {

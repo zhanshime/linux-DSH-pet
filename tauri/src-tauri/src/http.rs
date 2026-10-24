@@ -68,6 +68,11 @@ const WHISPER_LINES: &[&str] = &[
 ];
 
 impl Host {
+    /// 托盘等外部模块需要拿到碎碎念状态（开关自动碎碎念）。
+    pub fn whisper_handle(&self) -> Arc<Mutex<Whisper>> {
+        self.whisper.clone()
+    }
+
     pub fn new(assets: PathBuf) -> Self {
         let cfg = config::merged_config(&assets);
         let main = cfg.get("main");
@@ -160,6 +165,21 @@ impl Host {
 }
 
 impl Whisper {
+    /// 自动碎碎念是否开启（托盘菜单据此打勾）
+    pub fn is_auto(&self) -> bool {
+        self.auto
+    }
+
+    /// 开关自动碎碎念；打开时若已经过了周期，下一轮轮询就会立刻冒一句。
+    pub fn set_auto(&mut self, on: bool) {
+        self.auto = on;
+        if on {
+            self.last = Instant::now()
+                .checked_sub(self.every)
+                .unwrap_or_else(Instant::now);
+        }
+    }
+
     fn rand_index(n: usize) -> usize {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -29,6 +29,8 @@ finish-args:
   - --env=DSH_PET_PANEL_INSET=32
   # WebKitGTK + NVIDIA + Wayland 的显式同步崩溃（WebKit #280210），程序里也会设，双保险
   - --env=__NV_DISABLE_EXPLICIT_SYNC=1
+  # 系统托盘：沙箱默认不允许调用 StatusNotifierWatcher，托盘注册会被拒（ksni 会静默降级）。
+  - --talk-name=org.kde.StatusNotifierWatcher
 
 modules:
   - name: dsh-pet-desktop
