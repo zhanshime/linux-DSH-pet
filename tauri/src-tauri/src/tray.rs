@@ -17,6 +17,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::http::Whisper;
 
+/// 托盘与页面共享的“宠物是否走动”状态（true = 会自己走动/漫游）。
+pub struct Roaming(pub Arc<AtomicBool>);
+
 const ICON_NAME: &str = "com.pc2005.dshpet.desktop";
 const DSH_URL: &str = "http://127.0.0.1:3080";
 
@@ -24,6 +27,7 @@ pub struct PetTray {
     app: AppHandle,
     visible: Arc<AtomicBool>,
     whisper: Arc<Mutex<Whisper>>,
+    roaming: Arc<AtomicBool>,
 }
 
 impl PetTray {
@@ -59,6 +63,25 @@ impl PetTray {
             w.set_auto(on);
             eprintln!("[dsh-pet] 托盘：碎碎念 {}", if on { "开" } else { "关" });
         }
+    }
+
+    /// 切换“宠物是否走动”：页面里的 __dshPetRoaming 直接改每只宠物的 fixedEnabled，
+    /// 立刻生效（正在走的那只先停下），不需要重启或重载配置。
+    fn toggle_roaming(&mut self) {
+        let on = !self.roaming.load(Ordering::SeqCst);
+        self.roaming.store(on, Ordering::SeqCst);
+        let app = self.app.clone();
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(win) = app2.get_webview_window("pet") {
+                let js = format!(
+                    "window.__dshPetRoaming && window.__dshPetRoaming.set({});",
+                    if on { "true" } else { "false" }
+                );
+                let _ = win.eval(&js);
+            }
+        });
+        eprintln!("[dsh-pet] 托盘：宠物走动 {}", if on { "开" } else { "关" });
     }
 
     fn reload(&self) {
@@ -109,6 +132,7 @@ impl Tray for PetTray {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let vis = self.visible.load(Ordering::SeqCst);
         let whisper_auto = self.whisper.lock().map(|w| w.is_auto()).unwrap_or(false);
+        let roaming = self.roaming.load(Ordering::SeqCst);
         vec![
             StandardItem {
                 label: if vis { "隐藏宠物".into() } else { "显示宠物".into() },
@@ -123,6 +147,13 @@ impl Tray for PetTray {
             StandardItem {
                 label: "打开 DSH 网站".into(),
                 activate: Box::new(|t: &mut Self| t.open_site()),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "宠物走动".into(),
+                checked: roaming,
+                activate: Box::new(|t: &mut Self| t.toggle_roaming()),
                 ..Default::default()
             }
             .into(),
@@ -151,11 +182,17 @@ impl Tray for PetTray {
 }
 
 /// 启动托盘。失败（无 DBus / 无宿主）时只打日志，不影响桌宠本体。
-pub fn spawn(app: AppHandle, visible: Arc<AtomicBool>, whisper: Arc<Mutex<Whisper>>) {
+pub fn spawn(
+    app: AppHandle,
+    visible: Arc<AtomicBool>,
+    whisper: Arc<Mutex<Whisper>>,
+    roaming: Arc<AtomicBool>,
+) {
     let tray = PetTray {
         app,
         visible,
         whisper,
+        roaming,
     };
     match tray
         .disable_dbus_name(true)

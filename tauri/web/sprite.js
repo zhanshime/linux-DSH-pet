@@ -1183,6 +1183,10 @@ class PetSprite {
       { label: '碎碎念', action: 'whisper' },
       { label: '对话', action: 'chat' },
       { label: '回到初始位置', action: 'home' },
+      // 覆盖层壳里才有“托盘/走动”这层语义；浏览器插件菜单保持原样。
+      ...(window.__DSH_PET_BOOT__
+        ? [{ label: this.pet.fixedEnabled ? '允许走动' : '停止走动', action: 'toggle-roaming' }]
+        : []),
       // 改配置文件后免去回设置页点保存：请宿主重启桌面 Helper（全部桌面宠物窗口按最新配置重建）。
       // 放在最后：它是"重新加载"这类维护动作，与上面几个宠物互动项语义不同。
       { label: '重载配置', action: 'reload' },
@@ -1233,6 +1237,14 @@ class PetSprite {
     }
     if (leaf.action === 'home') {
       this.goHome(); // 停漫游/移动，清会话位置，回配置角落
+      return;
+    }
+    if (leaf.action === 'toggle-roaming') {
+      this.pet.fixedEnabled = !this.pet.fixedEnabled;
+      if (this.pet.fixedEnabled) this.stopMove(); // 立刻停住，别让它把这一步走完
+      if (window.petBridge && window.petBridge.reportRoaming) {
+        window.petBridge.reportRoaming(!this.pet.fixedEnabled); // 同步托盘勾选状态
+      }
       return;
     }
     if (leaf.action === 'reload') {

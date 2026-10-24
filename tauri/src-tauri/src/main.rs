@@ -642,6 +642,12 @@ fn pet_console(level: String, text: String) {
     }
 }
 
+/// 页面加载完配置后回报"宠物是否走动"（= !fixedEnabled），让托盘勾选状态与真实配置一致。
+#[tauri::command]
+fn pet_roaming_report(state: tauri::State<'_, tray::Roaming>, on: bool) {
+    state.0.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[tauri::command]
 fn pet_frontend_ready() {
     eprintln!("[dsh-pet] 渲染端起桥完成");
@@ -749,6 +755,7 @@ fn main() {
     tauri::Builder::default()
         .manage(Arc::new(pointer::InputState::default()))
         .manage(Selftest::default())
+        .manage(tray::Roaming(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))))
         .invoke_handler(tauri::generate_handler![
             pet_set_bounds,
             pet_set_interactive,
@@ -758,6 +765,7 @@ fn main() {
             pet_set_silhouette,
             pet_open_url,
             pet_frontend_ready,
+            pet_roaming_report,
             pet_console,
             pet_selftest_stage,
             pet_selftest_result,
@@ -956,7 +964,8 @@ window.addEventListener('resize', dshMark);
             }
             // 系统托盘（StatusNotifierItem）。无宿主时只打日志。
             let pet_visible = Arc::new(AtomicBool::new(true));
-            tray::spawn(app.handle().clone(), pet_visible, whisper.clone());
+            let roaming = app.state::<tray::Roaming>().0.clone();
+            tray::spawn(app.handle().clone(), pet_visible, whisper.clone(), roaming);
             if !wayland {
                 pointer::spawn(win.clone(), state);
             } else if std::env::var("DSH_PET_REPAINT_PUMP").map(|v| v == "1").unwrap_or(false) {

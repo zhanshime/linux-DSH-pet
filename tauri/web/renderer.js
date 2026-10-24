@@ -82,6 +82,23 @@ async function boot() {
     window.__dshPetDebug.configOk = true;
     window.__dshPetDebug.spriteCount = sprites.length;
     for (const s of sprites) s.playIdle();
+    // 托盘“宠物走动”开关：直接改每只宠物的 fixedEnabled（sprite 每次掷骰都会读它），
+    // 关掉时先停住正在走的，开起来后下一轮掷骰就会自己走动。
+    window.__dshPetRoaming = {
+      set(on) {
+        for (const s of sprites) {
+          s.pet.fixedEnabled = !on;
+          if (!on) s.stopMove();
+        }
+      },
+      get() {
+        const s = sprites[0];
+        return s ? !s.pet.fixedEnabled : true;
+      },
+    };
+    if (window.petBridge && window.petBridge.reportRoaming) {
+      window.petBridge.reportRoaming(!pet.fixedEnabled);
+    }
     startLoops();
   } catch (e) {
     showError('配置加载失败：' + (e && e.message ? String(e.message) : String(e)));

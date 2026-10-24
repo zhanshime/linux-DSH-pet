@@ -93,11 +93,13 @@ bash tauri/run.sh
 | 操作 | 行为 |
 | --- | --- |
 | 左键点图标 | 隐藏 / 显示宠物（隐藏时暂停视频，省 CPU） |
-| 右键菜单 | 隐藏宠物 / 打开 DSH 网站 / 碎碎念开关 / 重载宠物配置 / 退出 |
+| 右键菜单 | 隐藏宠物 / 打开 DSH 网站 / **宠物走动开关** / 碎碎念开关 / 重载宠物配置 / 退出 |
 
 - 托盘用纯 D-Bus 的 StatusNotifierItem（`ksni`），不依赖 libayatana-appindicator。
 - Flatpak 里必须允许访问 `org.kde.StatusNotifierWatcher`，清单已经加上 `--talk-name=org.kde.StatusNotifierWatcher`；
   自己改清单时漏了这条，托盘会静默不出现。
+- 「宠物走动」等价于 `pets[].fixedEnabled` 的运行时开关（宠物右键菜单里也有「允许走动 / 停止走动」，仅桌面版显示）；
+  关掉会立刻停住正在走的宠物，只影响本次运行，不改配置文件。
 - 同一时间只允许一个实例（`$XDG_RUNTIME_DIR/dsh-pet-desktop.sock` 当锁），重复启动会直接退出，避免出现两只宠物、两个图标。
 
 ## 架构
